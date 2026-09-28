@@ -1,5 +1,4 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
-
 from db import dbFetchAll, dbFetchOne, dbInsert, dbUpdate
 from utils import login_required, verify_csrf, get_current_user
 
@@ -28,12 +27,22 @@ def index():
 
                 dbUpdate("products", {"stock_quantity": new_qty}, "id = ?", (product_id,))
                 dbInsert("inventory", {
-                    "product_id": product_id, "movement_type": movement_type,
-                    "quantity": qty, "reference": "Manual Adjustment",
-                    "notes": notes, "moved_by": get_current_user()["id"],
+                    "product_id": product_id,
+                    "movement_type": movement_type,
+                    "quantity": qty,
+                    "reference": "Manual Adjustment",
+                    "notes": notes,
+                    "moved_by": get_current_user()["id"],
                 })
                 flash("Stock updated successfully.", "success")
-        return redirect(url_for("inventory.index"))
+                return redirect(url_for("inventory.index"))
+
+    # Fetch dynamic low stock threshold from settings (fallback to 10 if not set)
+    threshold_setting = dbFetchOne("SELECT setting_value FROM settings WHERE setting_key = 'low_stock_threshold'")
+    try:
+        low_stock_threshold = int(threshold_setting["setting_value"]) if threshold_setting else 10
+    except (ValueError, TypeError):
+        low_stock_threshold = 10
 
     total_value = dbFetchOne("SELECT COALESCE(SUM(stock_quantity*cost_price),0) AS v FROM products WHERE status='active'")
     total_items = dbFetchOne("SELECT COALESCE(SUM(stock_quantity),0) AS v FROM products WHERE status='active'")
@@ -41,20 +50,26 @@ def index():
         "SELECT COUNT(DISTINCT product_id) AS v FROM sales_items si JOIN sales s ON s.id=si.sale_id "
         "WHERE s.sale_date >= date('now','-30 days')"
     )
-    low_stock_cnt = dbFetchOne("SELECT COUNT(*) AS v FROM products WHERE stock_quantity <= min_stock_level AND status='active'")
+
+    # Use the dynamic low_stock_threshold for the KPI count
+    low_stock_cnt = dbFetchOne(
+        "SELECT COUNT(*) AS v FROM products WHERE stock_quantity > 0 AND stock_quantity <= ? AND status='active'",
+        (low_stock_threshold,)
+    )
 
     products = dbFetchAll(
         "SELECT p.*, c.name AS cat FROM products p LEFT JOIN categories c ON c.id=p.category_id "
         "WHERE p.status='active' ORDER BY p.stock_quantity ASC"
     )
+
     for p in products:
-        pct = min(100, round(p["stock_quantity"] / p["min_stock_level"] * 100)) if p["min_stock_level"] else 100
+        pct = min(100, round(p["stock_quantity"] / low_stock_threshold * 100)) if low_stock_threshold else 100
         p["pct"] = pct
         if p["stock_quantity"] == 0:
             p["label"], p["cls"], p["color"] = "Out of Stock", "badge-out-stock", "#ef4444"
         elif p["stock_quantity"] <= 5:
             p["label"], p["cls"], p["color"] = "Critical", "badge-critical", "#ef4444"
-        elif p["stock_quantity"] <= p["min_stock_level"]:
+        elif p["stock_quantity"] <= low_stock_threshold:
             p["label"], p["cls"], p["color"] = "Low Stock", "badge-low-stock", "#f59e0b"
         else:
             p["label"], p["cls"], p["color"] = "In Stock", "badge-in-stock", "#10b981"
@@ -76,10 +91,15 @@ def index():
 
     return render_template(
         "inventory/index.html",
-        page_title="Inventory", active_menu="inventory",
-        total_value=total_value["v"], total_items=total_items["v"],
-        fast_moving=fast_moving["v"], low_stock_cnt=low_stock_cnt["v"],
-        products=products, movements=movements, all_products=all_products,
+        page_title="Inventory",
+        active_menu="inventory",
+        total_value=total_value["v"],
+        total_items=total_items["v"],
+        fast_moving=fast_moving["v"],
+        low_stock_cnt=low_stock_cnt["v"],
+        products=products,
+        movements=movements,
+        all_products=all_products,
     )
 
 
@@ -91,7 +111,8 @@ def restocking():
         SELECT p.*, c.name AS cat, s.name AS supplier_name, s.email AS supplier_email,
                COALESCE((
                    SELECT AVG(si.quantity)
-                   FROM sales_items si JOIN sales sa ON sa.id=si.sale_id
+                   FROM sales_items si
+                   JOIN sales sa ON sa.id=si.sale_id
                    WHERE si.product_id=p.id AND sa.sale_date >= date('now','-30 days')
                ),0) AS avg_monthly_sales
         FROM products p
@@ -121,6 +142,8 @@ def restocking():
 
     return render_template(
         "inventory/restocking.html",
-        page_title="Restocking", active_menu="restocking",
-        need_restock=need_restock, counts=counts,
+        page_title="Restocking",
+        active_menu="restocking",
+        need_restock=need_restock,
+        counts=counts,
     )

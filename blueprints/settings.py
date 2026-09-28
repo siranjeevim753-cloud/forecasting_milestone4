@@ -1,7 +1,5 @@
 from datetime import datetime
-
 from flask import Blueprint, render_template, request, redirect, url_for, flash
-
 from db import dbFetchAll, dbFetchOne, dbQuery
 from utils import login_required, role_required, verify_csrf
 import config
@@ -9,8 +7,14 @@ import config
 bp = Blueprint("settings", __name__)
 
 SETTINGS_FIELDS = [
-    "company_name", "company_email", "company_phone", "company_address",
-    "currency", "currency_symbol", "tax_rate", "low_stock_threshold",
+    "company_name",
+    "company_email",
+    "company_phone",
+    "company_address",
+    "currency",
+    "currency_symbol",
+    "tax_rate",
+    "low_stock_threshold",
 ]
 
 
@@ -31,9 +35,10 @@ def index():
 
     rows = dbFetchAll("SELECT setting_key, setting_value FROM settings")
     s = {r["setting_key"]: r["setting_value"] for r in rows}
-
     return render_template(
         "settings/index.html",
-        page_title="Settings", active_menu="settings",
-        s=s, server_time=datetime.now().strftime("%d %b %Y %H:%M:%S"),
+        page_title="Settings",
+        active_menu="settings",
+        s=s,
+        server_time=datetime.now().strftime("%d %b %Y %H:%M:%S"),
     )
